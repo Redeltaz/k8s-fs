@@ -1,18 +1,32 @@
-resource "aws_vpc" "vpc" {
-    cidr_block = var.vpc_cidr_block
+resource "aws_eip" "private_subnet_eip" {
+  vpc = true
+}
 
-    tags = {
-        Name = "${var.vpc_name}"
-    }
+resource "aws_vpc" "vpc" {
+  cidr_block = var.vpc_cidr_block
+
+  tags = {
+    Name = "${var.vpc_name}"
+  }
 }
 
 resource "aws_subnet" "public_subnet" {
-  vpc_id                  = aws_vpc.vpc.id
-  cidr_block              = var.public_subnet_cidr_block
-  availability_zone       = var.subnet_az
+  vpc_id            = aws_vpc.vpc.id
+  cidr_block        = var.public_subnet_cidr_block
+  availability_zone = var.subnet_az
 
   tags = {
     Name = "${var.vpc_name}-public-subnet"
+  }
+}
+
+resource "aws_subnet" "private_subnet" {
+  vpc_id            = aws_vpc.vpc.id
+  cidr_block        = var.private_subnet_cidr_block
+  availability_zone = var.subnet_az
+
+  tags = {
+    Name = "${var.vpc_name}-private-subnet"
   }
 }
 
@@ -50,23 +64,45 @@ resource "aws_internet_gateway" "vpc_ig" {
   }
 }
 
-resource "aws_route_table" "vpc_public_route_table" {
+resource "aws_route_table" "public_route_table" {
   vpc_id = aws_vpc.vpc.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.vpc_ig.id
+  }
 
   tags = {
     Name = "${var.vpc_name}-public-route-table"
   }
 }
 
-resource "aws_route" "public_route" {
-  route_table_id         = aws_route_table.vpc_public_route_table.id
-  destination_cidr_block = "0.0.0.0/0"
-  gateway_id             = aws_internet_gateway.vpc_ig.id
+resource "aws_route_table_association" "public_route_table_association" {
+  subnet_id      = aws_subnet.public_subnet.id
+  route_table_id = aws_route_table.public_route_table.id
 }
 
-resource "aws_main_route_table_association" "main_route_association" {
-  vpc_id         = aws_vpc.vpc.id
-  route_table_id = aws_route_table.vpc_public_route_table.id
+resource "aws_nat_gateway" "nat_gateway" {
+  allocation_id = aws_eip.private_subnet_eip.id
+  subnet_id     = aws_subnet.public_subnet.id
+}
+
+resource "aws_route_table" "private_route_table" {
+  vpc_id = aws_vpc.vpc.id
+
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.nat_gateway.id
+  }
+
+  tags = {
+    Name = "${var.vpc_name}-private-route-table"
+  }
+}
+
+resource "aws_route_table_association" "private_route_table_association" {
+  subnet_id      = aws_subnet.private_subnet.id
+  route_table_id = aws_route_table.private_route_table.id
 }
 
 resource "aws_security_group" "main_sg" {
@@ -74,23 +110,9 @@ resource "aws_security_group" "main_sg" {
   vpc_id = aws_vpc.vpc.id
 
   ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "TCP"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    from_port   = 80
-    to_port     = 80
-    protocol    = "TCP"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    from_port   = 443
-    to_port     = 443
-    protocol    = "TCP"
+    from_port   = 0
+    to_port     = 0
+    protocol    = -1
     cidr_blocks = ["0.0.0.0/0"]
   }
 
@@ -99,5 +121,9 @@ resource "aws_security_group" "main_sg" {
     to_port     = 0
     protocol    = -1
     cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${var.vpc_name}_main_sg"
   }
 }
